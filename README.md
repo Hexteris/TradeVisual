@@ -1,2 +1,2 @@
 # TradeVisual
-Allows user to export trading data into this program and visualise the insights for better trading decision making. More tailored towards day traders
+Created for trader by traders. TradeVisual provides state of the art visualisation which integrates seemlessly with your trading data, creating a cohesive dashboard for users to measure their metrics and improve decision making during trading sessions. 
