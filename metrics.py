@@ -1,0 +1,202 @@
+# src/domain/metrics.py
+"""Metrics and reporting calculations."""
+
+from typing import List, Dict, Optional, Tuple
+from datetime import datetime, timedelta
+from sqlmodel import Session, select
+import pytz
+
+from src.db.models import Trade, TradeDay, Execution
+import pandas as pd
+
+
+class MetricsCalculator:
+    """Calculate trading metrics and equity curve."""
+    
+    @staticmethod
+    def get_equity_curve(
+        session: Session,
+        account_id: str,
+        report_timezone: str = "US/Eastern",
+        use_gross: bool = False,
+    ) -> pd.DataFrame:
+        """
+        Build equity curve from daily trade_day P&L.
+        
+        Returns DataFrame with columns: date, daily_pnl, cumulative_pnl, drawdown
+        """
+        tz = pytz.timezone(report_timezone)
+        
+        # Get all trade_days for account
+        stmt = select(TradeDay).join(Trade).where(
+            Trade.account_id == account_id
+        ).order_by(TradeDay.day_date_local)
+        
+        trade_days = session.exec(stmt).all()
+        
+        if not trade_days:
+            return pd.DataFrame(
+                columns=["date", "daily_pnl", "cumulative_pnl", "drawdown", "daily_gross"]
+            )
+        
+        # Group by day
+        by_day = {}
+        for td in trade_days:
+            if td.day_date_local not in by_day:
+                by_day[td.day_date_local] = []
+            by_day[td.day_date_local].append(td)
+        
+        # Calculate daily totals
+        rows = []
+        cumulative = 0.0
+        peak = 0.0
+        
+        for day_date in sorted(by_day.keys()):
+            items = by_day[day_date]
+            
+            daily_gross = sum(td.realized_gross for td in items)
+            daily_commissions = sum(td.commissions for td in items)
+            
+            if use_gross:
+                daily_pnl = daily_gross
+            else:
+                daily_pnl = daily_gross + daily_commissions
+            
+            cumulative += daily_pnl
+            peak = max(peak, cumulative)
+            drawdown = cumulative - peak if peak > 0 else 0.0
+            
+            rows.append({
+                "date": day_date,
+                "daily_pnl": daily_pnl,
+                "daily_gross": daily_gross,
+                "cumulative_pnl": cumulative,
+                "drawdown": drawdown,
+            })
+        
+        return pd.DataFrame(rows)
+    
+    @staticmethod
+    def get_daily_summary(
+        session: Session,
+        account_id: str,
+        day_date: str,  # YYYY-MM-DD
+    ) -> Dict:
+        """Get summary metrics for a specific day."""
+        
+        stmt = select(TradeDay).join(Trade).where(
+            Trade.account_id == account_id,
+            TradeDay.day_date_local == day_date,
+        )
+        
+        trade_days = session.exec(stmt).all()
+        
+        gross = sum(td.realized_gross for td in trade_days)
+        commissions = sum(td.commissions for td in trade_days)
+        net = sum(td.realized_net for td in trade_days)
+        shares_closed = sum(td.shares_closed for td in trade_days)
+        
+        return {
+            "date": day_date,
+            "gross_pnl": gross,
+            "commissions": commissions,
+            "net_pnl": net,
+            "trades_count": len(set(td.trade_id for td in trade_days)),
+            "shares_closed": shares_closed,
+        }
+    
+    @staticmethod
+    def get_overview_stats(
+        session: Session,
+        account_id: str,
+        use_gross: bool = False,
+    ) -> Dict:
+        """Get overall trading statistics."""
+        
+        stmt = select(Trade).where(
+            Trade.account_id == account_id,
+            Trade.status == "closed",
+        )
+        
+        closed_trades = session.exec(stmt).all()
+        
+        if not closed_trades:
+            return {
+                "total_trades": 0,
+                "winning_trades": 0,
+                "losing_trades": 0,
+                "win_rate": 0.0,
+                "total_gross": 0.0,
+                "total_commissions": 0.0,
+                "total_net": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "profit_factor": 0.0,
+            }
+        
+        wins = [t for t in closed_trades if t.net_pnl_total > 0]
+        losses = [t for t in closed_trades if t.net_pnl_total < 0]
+        
+        total_gross = sum(t.gross_pnl_total for t in closed_trades)
+        total_commissions = sum(t.commission_total for t in closed_trades)
+        total_net = sum(t.net_pnl_total for t in closed_trades)
+        
+        gross_wins = sum(t.gross_pnl_total for t in wins)
+        gross_losses = sum(abs(t.gross_pnl_total) for t in losses)
+        
+        profit_factor = gross_wins / gross_losses if gross_losses > 0 else 0.0
+        
+        return {
+            "total_trades": len(closed_trades),
+            "winning_trades": len(wins),
+            "losing_trades": len(losses),
+            "win_rate": len(wins) / len(closed_trades) if closed_trades else 0.0,
+            "total_gross": total_gross,
+            "total_commissions": total_commissions,
+            "total_net": total_net,
+            "avg_win": sum(t.net_pnl_total for t in wins) / len(wins) if wins else 0.0,
+            "avg_loss": sum(t.net_pnl_total for t in losses) / len(losses) if losses else 0.0,
+            "profit_factor": profit_factor,
+        }
+    
+    @staticmethod
+    def get_instrument_stats(
+        session: Session,
+        account_id: str,
+    ) -> pd.DataFrame:
+        """Get performance by instrument."""
+        
+        stmt = select(Trade).where(
+            Trade.account_id == account_id,
+            Trade.status == "closed",
+        )
+        
+        trades = session.exec(stmt).all()
+        
+        by_symbol = {}
+        for trade in trades:
+            key = trade.symbol
+            if key not in by_symbol:
+                by_symbol[key] = []
+            by_symbol[key].append(trade)
+        
+        rows = []
+        for symbol, symbol_trades in sorted(by_symbol.items()):
+            gross = sum(t.gross_pnl_total for t in symbol_trades)
+            commissions = sum(t.commission_total for t in symbol_trades)
+            net = sum(t.net_pnl_total for t in symbol_trades)
+            
+            wins = len([t for t in symbol_trades if t.net_pnl_total > 0])
+            total = len(symbol_trades)
+            
+            rows.append({
+                "symbol": symbol,
+                "count": total,
+                "wins": wins,
+                "win_rate": wins / total if total > 0 else 0.0,
+                "gross_pnl": gross,
+                "commissions": commissions,
+                "net_pnl": net,
+            })
+        
+        return pd.DataFrame(rows)

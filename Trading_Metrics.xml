@@ -3,7 +3,7 @@
 <FlexStatement accountId="U18059810" fromDate="20241210" toDate="20251209" period="Last365CalendarDays" whenGenerated="20251210;205919">
 <Trades>
 <Trade symbol="ADTX" quantity="1" tradePrice="4.11" dateTime="20251128;072106" buySell="BUY" fifoPnlRealized="0" orderType="LMT" cost="4.11002398" orderTime="20251128;072100" ibCommission="-0.000022" exchange="NASDAQ" />
-<Trade symbol="ADTX" quantity="1" tradePrice="4.11" dateTime="20251128;072201" buySell="BUY" fifoPnlRealized="0" orderType="LMT" cost="4.11002398" orderTime="20251128;072151" ibCommission="-0.000022" exchange="NASDAQ" />
+<Trade symbol="ADTX" quantity="1" tradePrice="4.11" dateTime="20251128;072201" buySell="BUY"2 fifoPnlRealized="0" orderType="LMT" cost="4.11002398" orderTime="20251128;072151" ibCommission="-0.000022" exchange="NASDAQ" />
 <Trade symbol="ADTX" quantity="1" tradePrice="4" dateTime="20251128;072631" buySell="BUY" fifoPnlRealized="0" orderType="LMT" cost="4.00002398" orderTime="20251128;072416" ibCommission="-0.000022" exchange="NASDAQ" />
 <Trade symbol="ADTX" quantity="1" tradePrice="4" dateTime="20251128;073646" buySell="BUY" fifoPnlRealized="0" orderType="LMT" cost="4.00002398" orderTime="20251128;073640" ibCommission="-0.000022" exchange="NASDAQ" />
 <Trade symbol="ADTX" quantity="1" tradePrice="4" dateTime="20251128;080706" buySell="BUY" fifoPnlRealized="0" orderType="LMT" cost="4.00002398" orderTime="20251128;080702" ibCommission="-0.000022" exchange="NASDAQ" />
