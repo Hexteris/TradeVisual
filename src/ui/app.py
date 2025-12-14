@@ -38,7 +38,7 @@ def init_session_state():
 
 def login_page():
     """Render login/signup page."""
-    st.title("📊 Trading Journal")
+    st.title("Trading Journal")
     st.write("IBKR Trade Metrics with Tradervue-like Journaling")
     
     col1, col2 = st.columns(2)
@@ -143,16 +143,18 @@ def main_app():
     
     # Main navigation
     st.title("📊 Trading Journal")
-    
-    if st.session_state.account:
-        page = st.selectbox(
-            "Navigate",
-            ["Import", "Journal", "Calendar", "Trades List", "Reports"],
-        )
-        
-        if page == "Import":
-            import_page.render(session)
-        elif page == "Journal":
+
+    # Always show page selector
+    page = st.selectbox(
+        "Navigate",
+        ["Import", "Journal", "Calendar", "Trades List", "Reports"],
+    )
+
+    if page == "Import":
+        import_page.render(session)
+    elif st.session_state.account:
+        # Other pages require an account
+        if page == "Journal":
             journal_page.render(session)
         elif page == "Calendar":
             calendar_page.render(session)
@@ -160,7 +162,9 @@ def main_app():
             trades_list_page.render(session)
         elif page == "Reports":
             reports_page.render(session)
-    
+    else:
+        st.warning("Please import trades first to create an account.")
+
     session.close()
 
 
