@@ -1,5 +1,5 @@
 # README.md
-# Trading Journal - IBKR Edition
+# 📊 Trading Journal - IBKR Edition
 
 # TradeVisual
 Created for trader by traders. TradeVisual provides state of the art visualisation which integrates seemlessly with your trading data, creating a cohesive dashboard for users to measure their metrics and improve decision making during trading sessions. 
@@ -7,30 +7,30 @@ A production-ready Tradervue-like trading journal built with Streamlit, SQLModel
 
 ## Features
 
-**IBKR Integration**
+✅ **IBKR Integration**
 - Parse IBKR Flex Query XML exports (idempotent)
 - Support for multiple accounts
 - Comprehensive execution data capture
 
-**Trade Reconstruction**
+✅ **Trade Reconstruction**
 - Deterministic FIFO lot matching
 - Partial fills and position tracking
 - Handle flips and multi-day trades
 - Realized P&L by day
 
-**Reporting**
+✅ **Reporting**
 - Daily journal with P&L by day
 - Monthly calendar heatmap
 - Equity curve with drawdown
 - Trade list with filters
 - Performance by instrument
 
-**Authentication**
+✅ **Authentication**
 - User sign-up/login
 - Secure password hashing (bcrypt)
 - Multi-user support
 
-**Multi-Database Support**
+✅ **Multi-Database Support**
 - SQLite for local development
 - PostgreSQL (Neon) for production
 
