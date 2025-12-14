@@ -142,7 +142,7 @@ def main_app():
             st.rerun()
     
     # Main navigation
-    st.title("📊 Trading Journal")
+    st.title("Trading Journal")
 
     # Always show page selector
     page = st.selectbox(
