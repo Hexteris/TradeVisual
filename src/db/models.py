@@ -4,7 +4,7 @@ SQLModel definitions for trading journal.
 Designed for SQLite locally, Neon PostgreSQL in production.
 """
 
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship, Column, String, DateTime, Float
 import uuid
@@ -132,7 +132,7 @@ class TradeDay(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     trade_id: str = Field(foreign_key="trade.id", index=True)
     
-    day_date_local: str = Field(index=True)  # YYYY-MM-DD in report_timezone
+    day_date_local: date = Field(index=True)  # YYYY-MM-DD in report_timezone
     
     day_status: str = Field()  # "opened", "adjusted", "closed"
     

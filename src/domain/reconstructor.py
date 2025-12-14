@@ -1,11 +1,8 @@
 # src/domain/reconstructor.py
-"""
-Trade reconstruction from executions.
-Implements FIFO lot matching, partial closes, position tracking, and flips.
-"""
+"""Trade reconstruction from executions using FIFO matching."""
 
-from typing import Dict, List, Tuple, Optional
-from datetime import datetime
+from typing import List, Tuple, Optional
+from datetime import datetime, date
 from collections import defaultdict, deque
 import pytz
 
@@ -25,20 +22,19 @@ class TradeReconstructor:
     ) -> Tuple[int, int]:
         """
         Full reconstruction of trades from executions.
-        Idempotent: deletes all existing trades/trade_days for account and rebuilds.
-        
-        Args:
-            session: SQLModel session
-            account_id: Account to reconstruct
-            report_timezone: Timezone for grouping trades by day
+        Idempotent: deletes existing trades and rebuilds.
         
         Returns:
             (trades_created, trade_days_created)
         """
         tz = pytz.timezone(report_timezone)
         
-        # Delete existing trades (cascade deletes trade_executions, trade_days, trade_tags)
-        session.query(Trade).filter(Trade.account_id == account_id).delete()
+        # Delete existing trades (cascades to trade_executions, trade_days, trade_tags)
+        stmt = select(Trade).where(Trade.account_id == account_id)
+        existing_trades = session.exec(stmt).all()
+        for trade in existing_trades:
+            session.delete(trade)
+        session.commit()
         
         # Get all executions sorted by time
         stmt = select(Execution).where(
@@ -50,7 +46,7 @@ class TradeReconstructor:
         if not executions:
             return 0, 0
         
-        # Group by (conid or symbol)
+        # Group by instrument (conid or symbol)
         by_instrument = defaultdict(list)
         for exe in executions:
             key = (exe.conid, exe.symbol) if exe.conid else (None, exe.symbol)
@@ -86,270 +82,304 @@ class TradeReconstructor:
     ) -> Tuple[int, int]:
         """Reconstruct trades for a single instrument."""
         
-        position = PositionState()  # Current position tracker
+        open_lots = deque()  # FIFO queue of open lots
+        current_trade = None
         trades_created = 0
         trade_days_created = 0
         
+        # Track daily P&L per trade
+        daily_pnl = defaultdict(lambda: {"gross": 0.0, "commissions": 0.0, "shares_closed": 0.0})
+        
         for exe in executions:
-            signed_qty = exe.quantity if exe.side == "BUY" else -exe.quantity
-            
-            # Check if position will flip
-            if position.current_signed_qty != 0:
-                current_sign = position.current_signed_qty > 0
-                will_flip = (position.current_signed_qty + signed_qty) == 0 or \
-                           ((position.current_signed_qty + signed_qty) * position.current_signed_qty < 0)
-            else:
-                will_flip = False
-            
-            if will_flip and position.current_signed_qty != 0:
-                # Close existing trade at crossing point
-                close_qty = -position.current_signed_qty
-                
-                num_days = TradeReconstructor._close_trade(
-                    session=session,
-                    trade_id=position.current_trade_id,
-                    close_execution=exe,
-                    close_qty=close_qty,
-                    tz=tz,
-                )
-                trade_days_created += num_days
-                
-                # Reset position
-                position.reset()
-            
-            # Now handle execution quantity (might be opening or closing)
-            if position.current_signed_qty == 0:
-                # Opening new position
-                trade = Trade(
-                    account_id=account_id,
-                    symbol=symbol,
-                    conid=conid,
-                    direction="LONG" if signed_qty > 0 else "SHORT",
-                    opened_at_utc=exe.ts_utc,
-                    status="open",
-                    quantity_opened=abs(signed_qty),
-                    quantity_closed=0.0,
-                )
-                session.add(trade)
-                session.flush()
-                
-                position.current_trade_id = trade.id
-                position.current_signed_qty = signed_qty
-                position.opened_at = exe.ts_utc
-                position.open_lots = deque([OpenLot(qty=abs(signed_qty), price=exe.price, exe_id=exe.id)])
-                
-                # Create trade_execution for opening
-                trade_exe = TradeExecution(
-                    trade_id=trade.id,
-                    execution_id=exe.id,
-                    signed_qty=signed_qty,
-                    role="open",
-                )
-                session.add(trade_exe)
-                trades_created += 1
-            
-            else:
-                # Partial close or continued position
-                if (signed_qty > 0 and position.current_signed_qty > 0) or \
-                   (signed_qty < 0 and position.current_signed_qty < 0):
-                    # Same direction: adding to position
-                    position.current_signed_qty += signed_qty
-                    position.open_lots.append(
-                        OpenLot(qty=abs(signed_qty), price=exe.price, exe_id=exe.id)
-                    )
+            # Skip executions with missing timestamps
+            if not exe.ts_utc:
+                continue
+            try:
+                exe_local = exe.ts_utc.astimezone(tz)
+                day_key = exe_local.date()
+            except Exception as e:
+                # Skip if timezone conversion fails
+                continue
+            if day_key is None:
+                continue
+         
+            if exe.side == "BUY":
+                # Opening or adding to long position
+                if not current_trade or current_trade.direction == "SHORT":
+                    # Need to close short or start new long
+                    if current_trade and current_trade.direction == "SHORT":
+                        # Close short position first
+                        close_qty = min(exe.quantity, sum(lot.qty for lot in open_lots))
+                        remaining = exe.quantity - close_qty
+                        
+                        # Match FIFO
+                        to_close = close_qty
+                        while to_close > 0 and open_lots:
+                            lot = open_lots[0]
+                            matched = min(lot.qty, to_close)
+                            
+                            # SHORT P&L: (open_price - close_price) * qty
+                            pnl = (lot.price - exe.price) * matched
+                            daily_pnl[(current_trade.id, day_key)]["gross"] += pnl
+                            daily_pnl[(current_trade.id, day_key)]["shares_closed"] += matched
+                            
+                            current_trade.quantity_closed += matched
+                            current_trade.gross_pnl_total += pnl
+                            
+                            to_close -= matched
+                            lot.qty -= matched
+                            if lot.qty == 0:
+                                open_lots.popleft()
+                        
+                        # Add commission
+                        daily_pnl[(current_trade.id, day_key)]["commissions"] += exe.commission
+                        current_trade.commission_total += exe.commission
+                        
+                        # Link execution
+                        trade_exe = TradeExecution(
+                            trade_id=current_trade.id,
+                            execution_id=exe.id,
+                            signed_qty=exe.quantity if close_qty > 0 else 0,
+                            role="close" if close_qty > 0 else "open",
+                        )
+                        session.add(trade_exe)
+                        
+                        # If fully closed
+                        if len(open_lots) == 0:
+                            current_trade.closed_at_utc = exe.ts_utc
+                            current_trade.status = "closed"
+                            current_trade.net_pnl_total = current_trade.gross_pnl_total + current_trade.commission_total
+                            
+                            # Create trade_days
+                            trade_days_created += TradeReconstructor._finalize_trade_days(
+                                session, current_trade, daily_pnl, tz
+                            )
+                            daily_pnl.clear()
+                            current_trade = None
+                        
+                        # If there's remaining quantity, start new long
+                        if remaining > 0:
+                            current_trade = Trade(
+                                account_id=account_id,
+                                symbol=symbol,
+                                conid=conid,
+                                direction="LONG",
+                                opened_at_utc=exe.ts_utc,
+                                status="open",
+                                quantity_opened=remaining,
+                                quantity_closed=0.0,
+                                gross_pnl_total=0.0,
+                                commission_total=exe.commission * (remaining / exe.quantity),
+                                net_pnl_total=0.0,
+                            )
+                            session.add(current_trade)
+                            session.flush()
+                            trades_created += 1
+                            
+                            open_lots.append(OpenLot(qty=remaining, price=exe.price, exe_id=exe.id))
+                            
+                            trade_exe = TradeExecution(
+                                trade_id=current_trade.id,
+                                execution_id=exe.id,
+                                signed_qty=remaining,
+                                role="open",
+                            )
+                            session.add(trade_exe)
+                            daily_pnl[(current_trade.id, day_key)]["commissions"] += exe.commission * (remaining / exe.quantity)
+                    else:
+                        # Start new long
+                        current_trade = Trade(
+                            account_id=account_id,
+                            symbol=symbol,
+                            conid=conid,
+                            direction="LONG",
+                            opened_at_utc=exe.ts_utc,
+                            status="open",
+                            quantity_opened=exe.quantity,
+                            quantity_closed=0.0,
+                            gross_pnl_total=0.0,
+                            commission_total=exe.commission,
+                            net_pnl_total=0.0,
+                        )
+                        session.add(current_trade)
+                        session.flush()
+                        trades_created += 1
+                        
+                        open_lots.append(OpenLot(qty=exe.quantity, price=exe.price, exe_id=exe.id))
+                        
+                        trade_exe = TradeExecution(
+                            trade_id=current_trade.id,
+                            execution_id=exe.id,
+                            signed_qty=exe.quantity,
+                            role="open",
+                        )
+                        session.add(trade_exe)
+                        daily_pnl[(current_trade.id, day_key)]["commissions"] += exe.commission
+                else:
+                    # Adding to existing long
+                    current_trade.quantity_opened += exe.quantity
+                    current_trade.commission_total += exe.commission
+                    open_lots.append(OpenLot(qty=exe.quantity, price=exe.price, exe_id=exe.id))
                     
-                    # Track in trade_execution
                     trade_exe = TradeExecution(
-                        trade_id=position.current_trade_id,
+                        trade_id=current_trade.id,
                         execution_id=exe.id,
-                        signed_qty=signed_qty,
+                        signed_qty=exe.quantity,
                         role="open",
                     )
                     session.add(trade_exe)
-                
-                else:
-                    # Opposite direction: closing part of position
-                    close_qty = min(abs(position.current_signed_qty), abs(signed_qty))
-                    position.current_signed_qty += signed_qty
-                    
-                    # Match lots FIFO
-                    remaining_to_close = close_qty
-                    while remaining_to_close > 0 and position.open_lots:
-                        lot = position.open_lots[0]
-                        matched = min(lot.qty, remaining_to_close)
+                    daily_pnl[(current_trade.id, day_key)]["commissions"] += exe.commission
+            
+            else:  # SELL
+                # Closing long or opening/adding short
+                if not current_trade or current_trade.direction == "LONG":
+                    if current_trade and current_trade.direction == "LONG":
+                        # Close long position
+                        close_qty = min(exe.quantity, sum(lot.qty for lot in open_lots))
+                        remaining = exe.quantity - close_qty
                         
-                        realized_pnl = TradeReconstructor._compute_realized_pnl(
-                            is_long=position.current_signed_qty + close_qty > 0,
-                            open_price=lot.price,
-                            close_price=exe.price,
-                            qty=matched,
+                        # Match FIFO
+                        to_close = close_qty
+                        while to_close > 0 and open_lots:
+                            lot = open_lots[0]
+                            matched = min(lot.qty, to_close)
+                            
+                            # LONG P&L: (close_price - open_price) * qty
+                            pnl = (exe.price - lot.price) * matched
+                            daily_pnl[(current_trade.id, day_key)]["gross"] += pnl
+                            daily_pnl[(current_trade.id, day_key)]["shares_closed"] += matched
+                            
+                            current_trade.quantity_closed += matched
+                            current_trade.gross_pnl_total += pnl
+                            
+                            to_close -= matched
+                            lot.qty -= matched
+                            if lot.qty == 0:
+                                open_lots.popleft()
+                        
+                        daily_pnl[(current_trade.id, day_key)]["commissions"] += exe.commission
+                        current_trade.commission_total += exe.commission
+                        
+                        trade_exe = TradeExecution(
+                            trade_id=current_trade.id,
+                            execution_id=exe.id,
+                            signed_qty=-exe.quantity if close_qty > 0 else 0,
+                            role="close" if close_qty > 0 else "open",
                         )
+                        session.add(trade_exe)
                         
-                        remaining_to_close -= matched
-                        lot.qty -= matched
+                        if len(open_lots) == 0:
+                            current_trade.closed_at_utc = exe.ts_utc
+                            current_trade.status = "closed"
+                            current_trade.net_pnl_total = current_trade.gross_pnl_total + current_trade.commission_total
+                            
+                            trade_days_created += TradeReconstructor._finalize_trade_days(
+                                session, current_trade, daily_pnl, tz
+                            )
+                            daily_pnl.clear()
+                            current_trade = None
                         
-                        if lot.qty == 0:
-                            position.open_lots.popleft()
+                        if remaining > 0:
+                            # Start new short
+                            current_trade = Trade(
+                                account_id=account_id,
+                                symbol=symbol,
+                                conid=conid,
+                                direction="SHORT",
+                                opened_at_utc=exe.ts_utc,
+                                status="open",
+                                quantity_opened=remaining,
+                                quantity_closed=0.0,
+                                gross_pnl_total=0.0,
+                                commission_total=exe.commission * (remaining / exe.quantity),
+                                net_pnl_total=0.0,
+                            )
+                            session.add(current_trade)
+                            session.flush()
+                            trades_created += 1
+                            
+                            open_lots.append(OpenLot(qty=remaining, price=exe.price, exe_id=exe.id))
+                            
+                            trade_exe = TradeExecution(
+                                trade_id=current_trade.id,
+                                execution_id=exe.id,
+                                signed_qty=-remaining,
+                                role="open",
+                            )
+                            session.add(trade_exe)
+                            daily_pnl[(current_trade.id, day_key)]["commissions"] += exe.commission * (remaining / exe.quantity)
+                    else:
+                        # Start new short
+                        current_trade = Trade(
+                            account_id=account_id,
+                            symbol=symbol,
+                            conid=conid,
+                            direction="SHORT",
+                            opened_at_utc=exe.ts_utc,
+                            status="open",
+                            quantity_opened=exe.quantity,
+                            quantity_closed=0.0,
+                            gross_pnl_total=0.0,
+                            commission_total=exe.commission,
+                            net_pnl_total=0.0,
+                        )
+                        session.add(current_trade)
+                        session.flush()
+                        trades_created += 1
+                        
+                        open_lots.append(OpenLot(qty=exe.quantity, price=exe.price, exe_id=exe.id))
+                        
+                        trade_exe = TradeExecution(
+                            trade_id=current_trade.id,
+                            execution_id=exe.id,
+                            signed_qty=-exe.quantity,
+                            role="open",
+                        )
+                        session.add(trade_exe)
+                        daily_pnl[(current_trade.id, day_key)]["commissions"] += exe.commission
+                else:
+                    # Adding to existing short
+                    current_trade.quantity_opened += exe.quantity
+                    current_trade.commission_total += exe.commission
+                    open_lots.append(OpenLot(qty=exe.quantity, price=exe.price, exe_id=exe.id))
                     
-                    # Track close in trade_execution
                     trade_exe = TradeExecution(
-                        trade_id=position.current_trade_id,
+                        trade_id=current_trade.id,
                         execution_id=exe.id,
-                        signed_qty=signed_qty,
-                        role="close",
+                        signed_qty=-exe.quantity,
+                        role="open",
                     )
                     session.add(trade_exe)
-                    
-                    # If fully closed, finalize trade
-                    if position.current_signed_qty == 0:
-                        num_days = TradeReconstructor._close_trade(
-                            session=session,
-                            trade_id=position.current_trade_id,
-                            close_execution=exe,
-                            close_qty=close_qty,
-                            tz=tz,
-                        )
-                        trade_days_created += num_days
-                        position.reset()
+                    daily_pnl[(current_trade.id, day_key)]["commissions"] += exe.commission
         
-        session.flush()
+        # Finalize any open trade
+        if current_trade and daily_pnl:
+            trade_days_created += TradeReconstructor._finalize_trade_days(
+                session, current_trade, daily_pnl, tz
+            )
+        
         return trades_created, trade_days_created
     
     @staticmethod
-    def _close_trade(
-        session: Session,
-        trade_id: str,
-        close_execution: Execution,
-        close_qty: float,
-        tz,
-    ) -> int:
-        """Finalize a closed trade and create trade_day records."""
+    def _finalize_trade_days(session: Session, trade: Trade, daily_pnl: dict, tz) -> int:
+        """Create TradeDay records from accumulated daily P&L."""
+        count = 0
+        for (trade_id, day_date), pnl_data in daily_pnl.items():
+            if trade_id != trade.id:
+                continue
+            if day_date is None:
+                continue
         
-        trade: Trade = session.query(Trade).filter(Trade.id == trade_id).first()
-        if not trade:
-            return 0
-        
-        trade.closed_at_utc = close_execution.ts_utc
-        trade.status = "closed"
-        
-        # Recompute aggregates
-        TradeReconstructor._compute_trade_metrics(session, trade)
-        
-        # Create trade_day records from trade_executions
-        num_days = TradeReconstructor._create_trade_days(session, trade, tz)
-        
-        return num_days
-    
-    @staticmethod
-    def _compute_trade_metrics(session: Session, trade: Trade) -> None:
-        """Compute total P&L and commissions for a trade."""
-        
-        trade_exes: List[TradeExecution] = session.query(TradeExecution).filter(
-            TradeExecution.trade_id == trade.id
-        ).all()
-        
-        executions_map = {te.execution_id: te for te in trade_exes}
-        
-        gross = 0.0
-        commissions = 0.0
-        
-        for exe_id in executions_map:
-            exe: Execution = session.query(Execution).filter(Execution.id == exe_id).first()
-            if exe:
-                commissions += exe.commission
-        
-        # For closed trades, compute gross P&L from entry/exit prices
-        if trade.status == "closed":
-            opens = [te for te in trade_exes if te.role == "open"]
-            closes = [te for te in trade_exes if te.role == "close"]
-            
-            if opens and closes:
-                avg_open = sum(
-                    session.query(Execution).filter(Execution.id == te.execution_id).first().price * 
-                    abs(te.signed_qty)
-                    for te in opens
-                ) / sum(abs(te.signed_qty) for te in opens)
-                
-                avg_close = sum(
-                    session.query(Execution).filter(Execution.id == te.execution_id).first().price * 
-                    abs(te.signed_qty)
-                    for te in closes
-                ) / sum(abs(te.signed_qty) for te in closes)
-                
-                is_long = trade.direction == "LONG"
-                total_qty = sum(abs(te.signed_qty) for te in opens)
-                
-                if is_long:
-                    gross = (avg_close - avg_open) * total_qty
-                else:
-                    gross = (avg_open - avg_close) * total_qty
-        
-        trade.gross_pnl_total = gross
-        trade.commission_total = commissions
-        trade.net_pnl_total = gross + commissions  # commission is negative
-    
-    @staticmethod
-    def _create_trade_days(session: Session, trade: Trade, tz) -> int:
-        """
-        Create trade_day records for each day the trade had activity.
-        """
-        trade_exes: List[TradeExecution] = session.query(TradeExecution).filter(
-            TradeExecution.trade_id == trade.id
-        ).all()
-        
-        # Group by day
-        by_day = defaultdict(list)
-        for te in trade_exes:
-            exe: Execution = session.query(Execution).filter(Execution.id == te.execution_id).first()
-            exe_local = exe.ts_utc.astimezone(tz)
-            day_key = exe_local.strftime("%Y-%m-%d")
-            by_day[day_key].append((te, exe))
-        
-        num_days = 0
-        for day_date, items in sorted(by_day.items()):
-            # Determine day_status
-            has_opens = any(te.role == "open" for te, _ in items)
-            has_closes = any(te.role == "close" for te, _ in items)
-            
-            if has_opens and has_closes:
-                day_status = "closed" if trade.status == "closed" else "adjusted"
-            elif has_opens:
-                day_status = "opened"
-            else:
-                day_status = "adjusted"
-            
-            # Compute day P&L
-            day_gross = 0.0
-            day_commissions = 0.0
-            day_shares_closed = 0.0
-            
-            for te, exe in items:
-                day_commissions += exe.commission
-                if te.role == "close":
-                    day_shares_closed += abs(te.signed_qty)
-                    # Compute realized pnl for this close
-                    # (simplified; FIFO would match to specific lots)
-            
-            day_net = day_gross + day_commissions
-            
             trade_day = TradeDay(
                 trade_id=trade.id,
                 day_date_local=day_date,
-                day_status=day_status,
-                realized_gross=day_gross,
-                commissions=day_commissions,
-                realized_net=day_net,
-                shares_closed=day_shares_closed,
+                day_status="closed" if trade.status == "closed" and pnl_data["shares_closed"] > 0 else "opened",
+                realized_gross=pnl_data["gross"],
+                commissions_sum=pnl_data["commissions"],
+                realized_net=pnl_data["gross"] + pnl_data["commissions"],
+                shares_closed=pnl_data["shares_closed"],
             )
             session.add(trade_day)
-            num_days += 1
+            count += 1
         
-        return num_days
-    
-    @staticmethod
-    def _compute_realized_pnl(is_long: bool, open_price: float, close_price: float, qty: float) -> float:
-        """Compute realized P&L for a matched lot."""
-        if is_long:
-            return (close_price - open_price) * qty
-        else:
-            return (open_price - close_price) * qty
+        return count
