@@ -21,7 +21,7 @@ def render(session: Session):
     # Report type selector
     report_type = st.selectbox(
         "Select Report",
-        ["Overview", "Instrument Performance", "Equity Curve"],
+        ["Overview", "Instrument Performance", "Equity Curve", "Time of Day (Entry)", "Price Levels"],
     )
     
     if report_type == "Overview":
@@ -30,7 +30,12 @@ def render(session: Session):
         render_instrument_stats(session, account)
     elif report_type == "Equity Curve":
         render_equity_curve(session, account)
+    elif report_type == "Time of Day (Entry)":
+        render_time_of_day_entry(session, account)
+    elif report_type == "Price Levels":
+        render_price_levels(session, account)
 
+        
 
 def render_overview(session: Session, account):
     """Render overview report."""
@@ -135,3 +140,90 @@ def render_equity_curve(session: Session, account):
     )
     
     st.plotly_chart(fig_daily, use_container_width=True)
+
+def render_time_of_day_entry(session: Session, account):
+    st.subheader("Time of Day (Entry)")
+    tz = st.session_state.get("report_timezone", "US/Eastern")
+    use_gross = st.checkbox("Use Gross P&L (vs Net)", value=False)
+
+    df = MetricsCalculator.get_entry_time_of_day_stats(
+        session=session,
+        account_id=account.id,
+        report_timezone=tz,
+        use_gross=use_gross,
+    )
+
+    if df.empty:
+        st.info("No closed trades yet.")
+        return
+
+    df["hour_label"] = df["hour"].apply(lambda h: f"{h:02d}:00")
+
+    fig_trades = px.bar(
+        df,
+        x="hour_label",
+        y="trades",
+        title="Trades by Entry Hour",
+        labels={"hour_label": "Entry Hour", "trades": "Number of Trades"},
+    )
+    st.plotly_chart(fig_trades, use_container_width=True)
+
+    fig_pnl = px.bar(
+        df,
+        x="hour_label",
+        y="pnl_sum",
+        title="P&L by Entry Hour",
+        labels={"hour_label": "Entry Hour", "pnl_sum": "Total P&L ($)"},
+        color="pnl_sum",
+        color_continuous_scale=["red", "green"],
+    )
+    st.plotly_chart(fig_pnl, use_container_width=True)
+
+    st.dataframe(
+        df[["hour_label", "trades", "pnl_sum", "pnl_avg", "win_rate"]],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def render_price_levels(session: Session, account):
+    st.subheader("Price Level Performance")
+    use_gross = st.checkbox("Use Gross P&L (vs Net)", value=False)
+
+    df = MetricsCalculator.get_price_bucket_stats(
+        session=session,
+        account_id=account.id,
+        use_gross=use_gross,
+    )
+
+    if df.empty:
+        st.info("No closed trades yet.")
+        return
+
+    df["bucket_label"] = df["price_bucket"].astype(str)
+
+    fig_trades = px.bar(
+        df,
+        x="bucket_label",
+        y="trades",
+        title="Trades by Price Bucket (Avg Entry Price)",
+        labels={"bucket_label": "Avg Entry Price Bucket", "trades": "Number of Trades"},
+    )
+    st.plotly_chart(fig_trades, use_container_width=True)
+
+    fig_pnl = px.bar(
+        df,
+        x="bucket_label",
+        y="pnl_sum",
+        title="P&L by Price Bucket",
+        labels={"bucket_label": "Avg Entry Price Bucket", "pnl_sum": "Total P&L ($)"},
+        color="pnl_sum",
+        color_continuous_scale=["red", "green"],
+    )
+    st.plotly_chart(fig_pnl, use_container_width=True)
+
+    st.dataframe(
+        df[["price_bucket", "trades", "pnl_sum", "pnl_avg"]],
+        use_container_width=True,
+        hide_index=True,
+    )

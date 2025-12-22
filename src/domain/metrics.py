@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from sqlmodel import Session, select
 import pytz
 
-from src.db.models import Trade, TradeDay, Execution
+from src.db.models import Trade, TradeDay, Execution, TradeExecution
 import pandas as pd
 
 
@@ -200,3 +200,109 @@ class MetricsCalculator:
             })
         
         return pd.DataFrame(rows)
+    
+    @staticmethod
+    def get_entry_time_of_day_stats(
+        session: Session,
+        account_id: str,
+        report_timezone: str = "US/Eastern",
+        use_gross: bool = False,
+    ) -> pd.DataFrame:
+        """Group closed-trade performance by ENTRY hour (local)."""
+        tz = pytz.timezone(report_timezone)
+
+        trades = session.exec(
+            select(Trade).where(
+                Trade.account_id == account_id,
+                Trade.status == "closed",
+            )
+        ).all()
+
+        if not trades:
+            return pd.DataFrame(columns=["hour", "trades", "pnl_sum", "pnl_avg"])
+
+        rows = []
+        for t in trades:
+            # Entry time-of-day uses opened_at_utc converted to report tz
+            entry_local = t.opened_at_utc.astimezone(tz)
+            pnl = t.gross_pnl_total if use_gross else t.net_pnl_total
+            rows.append({"hour": entry_local.hour, "pnl": pnl})
+
+        df = pd.DataFrame(rows)
+        out = (
+            df.groupby("hour", as_index=False)
+              .agg(trades=("pnl", "count"), pnl_sum=("pnl", "sum"), pnl_avg=("pnl", "mean"))
+              .sort_values("hour")
+        )
+        return out
+    
+    @staticmethod
+    def get_price_bucket_stats(
+        session: Session,
+        account_id: str,
+        bucket_edges=None,
+        use_gross: bool = False,
+    ) -> pd.DataFrame:
+        """
+        Bucket closed trades by avg entry price and aggregate P&L + trade counts.
+        """
+        if bucket_edges is None:
+            bucket_edges = [0, 5, 10, 20, 50, 100, 200, 500, 1000, 10_000]
+
+        trades = session.exec(
+            select(Trade).where(
+                Trade.account_id == account_id,
+                Trade.status == "closed",
+            )
+        ).all()
+
+        if not trades:
+            return pd.DataFrame(columns=["price_bucket", "trades", "pnl_sum", "pnl_avg"])
+
+        trade_ids = [t.id for t in trades]
+        trade_map = {t.id: t for t in trades}
+
+        rows = session.exec(
+            select(TradeExecution, Execution)
+            .join(Execution, TradeExecution.execution_id == Execution.id)
+            .where(
+                TradeExecution.trade_id.in_(trade_ids),
+                TradeExecution.role == "open",
+            )
+        ).all()
+
+        accum = {}  # trade_id -> (notional_sum, qty_sum)
+        for te, exe in rows:
+            qty = abs(te.signed_qty)
+            if qty == 0:
+                continue
+            notional = exe.price * qty
+            n, q = accum.get(te.trade_id, (0.0, 0.0))
+            accum[te.trade_id] = (n + notional, q + qty)
+
+        out_rows = []
+        for trade_id, (notional_sum, qty_sum) in accum.items():
+            if qty_sum <= 0:
+                continue
+            avg_entry = notional_sum / qty_sum
+            t = trade_map[trade_id]
+            pnl = t.gross_pnl_total if use_gross else t.net_pnl_total
+            out_rows.append({"avg_entry": avg_entry, "pnl": pnl})
+
+        df = pd.DataFrame(out_rows)
+        if df.empty:
+            return pd.DataFrame(columns=["price_bucket", "trades", "pnl_sum", "pnl_avg"])
+
+        df["price_bucket"] = pd.cut(
+            df["avg_entry"], bins=bucket_edges, right=False, include_lowest=True
+        )
+        agg = (
+            df.groupby("price_bucket", as_index=False)
+            .agg(
+                trades=("pnl", "count"),
+                pnl_sum=("pnl", "sum"),
+                pnl_avg=("pnl", "mean"),
+            )
+            .sort_values("price_bucket")
+        )
+        return agg
