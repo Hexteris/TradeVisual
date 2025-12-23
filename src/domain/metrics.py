@@ -3,7 +3,7 @@
 
 from typing import Dict
 from sqlmodel import Session, select
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pytz
 import pandas as pd
 
@@ -17,7 +17,7 @@ class MetricsCalculator:
     def get_equity_curve(
         session: Session,
         account_id: str,
-        report_timezone: str = "US/Eastern",
+        report_timezone: str = "Asia/Singapore",
         use_gross: bool = False,
     ) -> pd.DataFrame:
         """
@@ -202,7 +202,7 @@ class MetricsCalculator:
     def get_entry_time_of_day_stats(
         session: Session,
         account_id: str,
-        report_timezone: str = "US/Eastern",
+        report_timezone: str = "Asia/Singapore",
         use_gross: bool = False,
     ) -> pd.DataFrame:
         """Closed-trade performance grouped by ENTRY hour in report timezone."""
@@ -222,11 +222,11 @@ class MetricsCalculator:
 
         rows = []
         for t in trades:
-            entry_local = t.opened_at_utc.astimezone(tz)
+            entry_utc_aware = t.opened_at_utc.replace(tzinfo=timezone.utc)
+            entry_local = entry_utc_aware.astimezone(tz)
+            hour = entry_local.hour
             pnl = t.gross_pnl_total if use_gross else t.net_pnl_total
-            rows.append(
-                {"hour": entry_local.hour, "pnl": pnl, "is_win": 1 if pnl > 0 else 0}
-            )
+            rows.append({"hour": hour, "pnl": pnl, "is_win": 1 if pnl > 0 else 0})
 
         df = pd.DataFrame(rows)
         out = (

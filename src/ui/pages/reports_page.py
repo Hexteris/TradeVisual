@@ -11,7 +11,7 @@ from src.domain.metrics import MetricsCalculator
 
 def render(session: Session):
     """Render reports page."""
-    st.subheader("📈 Reports")
+    st.subheader("Reports")
     
     account = st.session_state.get("account")
     if not account:
@@ -93,7 +93,7 @@ def render_equity_curve(session: Session, account):
     equity_curve = MetricsCalculator.get_equity_curve(
         session=session,
         account_id=account.id,
-        report_timezone=st.session_state.get("report_timezone", "US/Eastern"),
+        report_timezone=st.session_state.get("report_timezone", "Asia/Singapore"),
     )
     
     if equity_curve.empty:
@@ -143,7 +143,7 @@ def render_equity_curve(session: Session, account):
 
 def render_time_of_day_entry(session: Session, account):
     st.subheader("Time of Day (Entry)")
-    tz = st.session_state.get("report_timezone", "US/Eastern")
+    tz = st.session_state.get("report_timezone", "Asia/Singapore")
     use_gross = st.checkbox("Use Gross P&L (vs Net)", value=False)
 
     df = MetricsCalculator.get_entry_time_of_day_stats(

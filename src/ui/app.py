@@ -33,7 +33,7 @@ def init_session_state():
     if "account" not in st.session_state:
         st.session_state.account = None
     if "report_timezone" not in st.session_state:
-        st.session_state.report_timezone = "US/Eastern"
+        st.session_state.report_timezone = "Asia/Singapore"
 
 
 def login_page():
@@ -87,6 +87,22 @@ def login_page():
                     st.error(message)
                 session.close()
 
+def timezone_selector():
+    if "report_timezone" not in st.session_state:
+        st.session_state["report_timezone"] = "Asia/Singapore"  # your default
+
+    tz_options = [
+        "Asia/Singapore",
+        "US/Eastern",
+        "Europe/London",
+        "UTC",
+    ]
+    st.session_state["report_timezone"] = st.selectbox(
+        "Report Timezone",
+        tz_options,
+        index=tz_options.index(st.session_state["report_timezone"]),
+    )
+
 
 def main_app():
     """Render main application."""
@@ -116,7 +132,7 @@ def main_app():
         st.subheader("Report Settings")
         timezone = st.selectbox(
             "Report Timezone",
-            ["US/Eastern", "US/Central", "US/Mountain", "US/Pacific", "UTC"],
+            ["Asia/Singapore", "US/Eastern", "US/Central", "US/Mountain", "US/Pacific", "UTC"],
             index=0,
         )
         st.session_state.report_timezone = timezone
