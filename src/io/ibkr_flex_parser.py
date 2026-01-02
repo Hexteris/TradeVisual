@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import List, Optional, Tuple
 import pytz
 from dataclasses import dataclass
+import re
+
 
 
 @dataclass
@@ -35,16 +37,51 @@ class IBKRFlexParser:
     @staticmethod
     def parse_timestamp(ts_str: str) -> Tuple[datetime, datetime]:
         """
-        Parse IBKR timestamp (format: YYYYMMDD;HHMMSS).
-        
+        Parse IBKR timestamp with edge-case handling.
+
+        Supported:
+        - YYYYMMDD;HHMMSS
+        - YYYY-MM-DD;HH:MM:SS
+        - Either can optionally end with a timezone name, e.g.:
+          "2025-01-02;09:31:00 US/Eastern" or "20250102;093100 America/New_York"
+
         Returns:
-            (datetime_in_et, datetime_in_utc)
+            (datetime_in_local_tz, datetime_in_utc)
         """
-        # Format: 20251128;072106
-        dt_naive = datetime.strptime(ts_str, '%Y%m%d;%H%M%S')
-        dt_et = IBKRFlexParser.IBKR_TZ.localize(dt_naive)
-        dt_utc = dt_et.astimezone(pytz.UTC)
-        return dt_et, dt_utc
+        ts_str = (ts_str or "").strip()
+        if not ts_str:
+            raise ValueError("Empty timestamp")
+
+        # Split optional trailing tz name: "<timestamp> <TZ>"
+        m = re.match(r"^(.*?)(?:\s+([A-Za-z_\/]+))?$", ts_str)
+        base = m.group(1).strip()
+        tz_name = (m.group(2) or "").strip()
+
+        tz = pytz.timezone(tz_name) if tz_name else IBKRFlexParser.IBKR_TZ
+
+        fmts = ("%Y%m%d;%H%M%S", "%Y-%m-%d;%H:%M:%S")
+        last_err = None
+
+        for fmt in fmts:
+            try:
+                dt_naive = datetime.strptime(base, fmt)
+
+                # Strict DST handling:
+                # - is_dst=None raises for ambiguous/non-existent times (preferred).
+                try:
+                    dt_local = tz.localize(dt_naive, is_dst=None)
+                except (pytz.AmbiguousTimeError, pytz.NonExistentTimeError):
+                    # Deterministic fallback:
+                    # - For ambiguous times (clock goes back), pick standard time (is_dst=False).
+                    # - For nonexistent times (clock jumps forward), also pick standard time.
+                    dt_local = tz.localize(dt_naive, is_dst=False)
+
+                return dt_local, dt_local.astimezone(pytz.UTC)
+
+            except Exception as e:
+                last_err = e
+
+        raise ValueError(f"Unrecognized timestamp format: {ts_str}") from last_err
     
     @staticmethod
     def parse_xml(xml_content: str) -> List[ParsedExecution]:
@@ -59,13 +96,17 @@ class IBKRFlexParser:
                 symbol = trade_elem.get("symbol", "").strip()
                 conid_str = trade_elem.get("conid", "")
                 conid = int(conid_str) if conid_str else None
+
+                if not account_id or not ib_execution_id or not symbol:
+                    continue
                 
                 # Timestamp from dateTime field
                 ts_raw = trade_elem.get("dateTime", "").strip()
                 if not ts_raw:
                     continue
                 
-                dt_et, dt_utc = IBKRFlexParser.parse_timestamp(ts_raw)
+                _, dt_utc = IBKRFlexParser.parse_timestamp(ts_raw)
+
                 
                 side = trade_elem.get("buySell", "").strip().upper()
                 if side not in ("BUY", "SELL"):

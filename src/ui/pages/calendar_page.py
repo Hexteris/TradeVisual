@@ -1,115 +1,118 @@
 # src/ui/pages/calendar_page.py
 """Calendar page - monthly P&L heatmap."""
 
-import streamlit as st
-from sqlmodel import Session, select
-import pandas as pd
 import calendar
-from datetime import datetime
+from datetime import date
+
+import pandas as pd
+import streamlit as st
+from sqlmodel import select
 
 from src.db.models import Trade, TradeDay
-from src.domain.metrics import MetricsCalculator
+from src.db.session import get_session
+from src.ui.helpers.current_context import require_account_id
 
 
-def render(session: Session):
-    """Render calendar page."""
+def render():
     st.subheader("📅 Calendar P&L")
-    
-    account = st.session_state.get("account")
-    if not account:
-        st.error("No account selected")
-        return
-    
-    # Get equity curve to find date range
-    equity_curve = MetricsCalculator.get_equity_curve(
-        session=session,
-        account_id=account.id,
-        report_timezone=st.session_state.get("report_timezone", "US/Eastern"),
-    )
-    
-    if equity_curve.empty:
+
+    account_id = require_account_id()
+
+    use_gross = st.checkbox("Show Gross (vs Net)", value=False)
+
+    # Find available months based on TradeDay dates for this account
+    with get_session() as session:
+        stmt_dates = (
+            select(TradeDay.day_date_local)
+            .join(Trade, Trade.id == TradeDay.trade_id)
+            .where(Trade.account_id == account_id)
+        )
+        all_days = session.exec(stmt_dates).all()
+
+    if not all_days:
         st.info("No trades yet. Import IBKR data first.")
         return
-    
-    # P&L toggle
-    col1, col2 = st.columns(2)
-    with col1:
-        use_gross = st.checkbox("Show Gross (vs Net)", value=False)
-    
-    # Get unique months from equity curve
-    equity_curve['date'] = pd.to_datetime(equity_curve['date'])
-    equity_curve['year_month'] = equity_curve['date'].dt.to_period('M')
-    unique_months = sorted(equity_curve['year_month'].unique())
-    
-    # Month selector
+
+    # Build month options from available days
+    day_series = pd.to_datetime(pd.Series(all_days))
+    months = sorted(day_series.dt.to_period("M").unique())
+
     selected_month = st.selectbox(
         "Select Month",
-        unique_months,
-        format_func=lambda x: x.strftime('%Y-%m'),
+        months,
+        format_func=lambda p: p.strftime("%Y-%m"),
+        index=len(months) - 1,  # default to most recent month
     )
-    
-    # Build calendar heatmap for selected month
-    year = selected_month.year
-    month = selected_month.month
-    
-    # Get all trade_days for the month
-    month_start = f"{year:04d}-{month:02d}-01"
-    month_end_day = calendar.monthrange(year, month)[1]
-    month_end = f"{year:04d}-{month:02d}-{month_end_day:02d}"
-    
-    stmt = select(TradeDay).where(
-        TradeDay.day_date_local >= month_start,
-        TradeDay.day_date_local <= month_end,
-    ).join(Trade).where(Trade.account_id == account.id)
-    
-    trade_days = session.exec(stmt).all()
-    
-    # Group by day
-    by_day = {}
+
+    year = int(selected_month.year)
+    month = int(selected_month.month)
+    month_start = date(year, month, 1)
+    month_end = date(year, month, calendar.monthrange(year, month)[1])
+
+    # Pull TradeDays for the selected month (account-scoped)
+    with get_session() as session:
+        stmt = (
+            select(TradeDay)
+            .join(Trade, Trade.id == TradeDay.trade_id)
+            .where(Trade.account_id == account_id)
+            .where(TradeDay.day_date_local >= month_start)
+            .where(TradeDay.day_date_local <= month_end)
+        )
+        trade_days = session.exec(stmt).all()
+
+    # Aggregate pnl by date
+    by_day_pnl = {}
     for td in trade_days:
-        if td.day_date_local not in by_day:
-            by_day[td.day_date_local] = []
-        by_day[td.day_date_local].append(td)
-    
-    # Build calendar grid
+        pnl = td.realized_gross if use_gross else td.realized_net
+        by_day_pnl[td.day_date_local] = by_day_pnl.get(td.day_date_local, 0.0) + float(pnl)
+
+    # Month summary
+    month_total = sum(by_day_pnl.values())
+    trading_days = len(by_day_pnl)
+    avg_per_day = (month_total / trading_days) if trading_days else 0.0
+
+    st.write(f"### {calendar.month_name[month]} {year}")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Month P&L", f"${month_total:.2f}")
+    c2.metric("Trading days", trading_days)
+    c3.metric("Avg / day", f"${avg_per_day:.2f}")
+
+    st.divider()
+
+    # Calendar grid
     cal = calendar.monthcalendar(year, month)
-    
-    # Header
-    st.write(f"### {selected_month.strftime('%B %Y')}")
-    
-    # Day names
+
+    # Day headers
     cols = st.columns(7)
-    for i, day_name in enumerate(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']):
+    for i, day_name in enumerate(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]):
         cols[i].write(f"**{day_name}**")
-    
-    # Calendar cells
+
+    # Cells
     for week in cal:
         cols = st.columns(7)
-        for day_of_week, day in enumerate(week):
-            if day == 0:
-                cols[day_of_week].write("")
-            else:
-                day_str = f"{year:04d}-{month:02d}-{day:02d}"
-                
-                if day_str in by_day:
-                    items = by_day[day_str]
-                    if use_gross:
-                        pnl = sum(td.realized_gross for td in items)
-                    else:
-                        pnl = sum(td.realized_net for td in items)
-                    
-                    # Color based on P&L
-                    color = "green" if pnl > 0 else "red" if pnl < 0 else "gray"
-                    
-                    with cols[day_of_week]:
-                        st.markdown(
-                            f"""
-                            <div style="background-color: {color}; opacity: 0.3; padding: 10px; border-radius: 5px; text-align: center;">
-                            <b>{day}</b><br>
-                            ${pnl:.2f}
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
-                else:
-                    cols[day_of_week].write(str(day))
+        for i, day_num in enumerate(week):
+            if day_num == 0:
+                cols[i].write("")
+                continue
+
+            d = date(year, month, day_num)
+            pnl = by_day_pnl.get(d)
+
+            if pnl is None:
+                cols[i].write(str(day_num))
+                continue
+
+            color = "green" if pnl > 0 else "red" if pnl < 0 else "gray"
+            with cols[i]:
+                st.markdown(
+                    f"""
+                    <div style="background-color: {color}; opacity: 0.25; padding: 10px; border-radius: 6px; text-align: center;">
+                      <b>{day_num}</b><br/>
+                      ${pnl:.2f}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+    st.caption(f"Mode: {'Gross' if use_gross else 'Net'} • Session-only data")

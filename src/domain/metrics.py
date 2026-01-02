@@ -3,7 +3,7 @@
 
 from typing import Dict
 from sqlmodel import Session, select
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 import pytz
 import pandas as pd
 
@@ -25,7 +25,6 @@ class MetricsCalculator:
 
         Returns DataFrame with columns: date, daily_pnl, cumulative_pnl, drawdown, daily_gross
         """
-        tz = pytz.timezone(report_timezone)
 
         stmt = (
             select(TradeDay)
@@ -63,7 +62,7 @@ class MetricsCalculator:
 
             cumulative += daily_pnl
             peak = max(peak, cumulative)
-            drawdown = cumulative - peak if peak > 0 else 0.0
+            drawdown = cumulative - peak
 
             rows.append(
                 {
@@ -81,12 +80,16 @@ class MetricsCalculator:
     def get_daily_summary(
         session: Session,
         account_id: str,
-        day_date: str,  # YYYY-MM-DD
+        day_date: date,
     ) -> Dict:
         """Get summary metrics for a specific day."""
-        stmt = select(TradeDay).join(Trade).where(
-            Trade.account_id == account_id,
-            TradeDay.day_date_local == day_date,
+        stmt = (
+            select(TradeDay)
+            .join(Trade)
+            .where(
+                Trade.account_id == account_id,
+                TradeDay.day_date_local == day_date,
+            )
         )
         trade_days = session.exec(stmt).all()
 
@@ -100,7 +103,7 @@ class MetricsCalculator:
             "gross_pnl": gross,
             "commissions": commissions,
             "net_pnl": net,
-            "trades_count": len(set(td.trade_id for td in trade_days)),
+            "trades_count": len({td.trade_id for td in trade_days}),
             "shares_closed": shares_closed,
         }
 

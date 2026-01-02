@@ -1,38 +1,35 @@
 # src/db/session.py
-"""Database session factory and initialization."""
+"""Per-session in-memory DB for Streamlit (no persistence)."""
 
-import os
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-from sqlmodel import SQLModel, create_engine, Session
-from pathlib import Path
+import streamlit as st
+from sqlalchemy.pool import StaticPool
+from sqlmodel import SQLModel, Session, create_engine
 
-# Get database URL from environment, default to local SQLite
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./trading_journal.db")
-
-# Convert sqlite:// to file path for local development
-if DATABASE_URL.startswith("sqlite://"):
-    db_path = DATABASE_URL.replace("sqlite:///", "")
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-
-# Use synchronous engine for Streamlit (no async support needed yet)
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {},
-    echo=False,
-)
+_ENGINE_KEY = "db_engine"
 
 
-def create_db_and_tables():
-    """Create all tables if they don't exist."""
-    SQLModel.metadata.create_all(engine)
+def _new_engine():
+    return create_engine(
+        "sqlite://",  # in-memory
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,  # keep one connection; DB survives while engine exists
+        echo=False,
+    )
+
+
+def reset_db():
+    """Forget the current in-memory DB; next get_session() recreates it."""
+    st.session_state.pop(_ENGINE_KEY, None)
+
+
+def get_engine():
+    """Get/create the engine for this browser tab."""
+    if _ENGINE_KEY not in st.session_state:
+        st.session_state[_ENGINE_KEY] = _new_engine()
+        SQLModel.metadata.create_all(st.session_state[_ENGINE_KEY])
+    return st.session_state[_ENGINE_KEY]
 
 
 def get_session() -> Session:
-    """Get a new database session."""
-    return Session(engine)
-
-
-def init_db():
-    """Initialize database on startup."""
-    create_db_and_tables()
+    """Get a SQLModel session bound to this tab's in-memory DB."""
+    return Session(get_engine())
