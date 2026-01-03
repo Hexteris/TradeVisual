@@ -14,7 +14,7 @@ from src.domain.metrics import MetricsCalculator
 
 def render():
     """Render journal page."""
-    st.subheader("📖 Journal - Daily P&L")
+    st.subheader("Journal - Daily P&L")
 
     account_id = require_account_id()
     tz = st.session_state.report_timezone

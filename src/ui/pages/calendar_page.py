@@ -18,7 +18,7 @@ from src.ui.helpers.current_context import require_account_id
 
 
 def render():
-    st.subheader("📅 Calendar P&L")
+    st.subheader("Calendar P&L")
     
     account_id = require_account_id()
 

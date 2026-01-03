@@ -14,7 +14,7 @@ from src.ui.helpers.current_context import require_account_id
 
 def render():
     """Render trades list page."""
-    st.subheader("📊 Trades List")
+    st.subheader("Trades List")
 
     account_id = require_account_id()
 

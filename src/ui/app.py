@@ -8,7 +8,7 @@ from src.ui.pages import import_page, journal_page, calendar_page, trades_list_p
 
 st.set_page_config(
     page_title="Trading Journal",
-    page_icon="📊",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded",
 )
