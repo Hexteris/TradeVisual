@@ -4,8 +4,11 @@ Created for traders by traders. TradeVisual provides state of the art visualisat
 
 Live demo: https://tradevisual.onrender.com/
 
-> Note: This app uses an in-memory SQLite database (session-based). Your data resets when the app restarts (e.g., Render free tier spin-down).### Cold start / slow first load (Render free tier)
+### Cold start / slow first load (Render free tier)
 If the demo link feels slow after a period of inactivity, it’s expected on Render’s free tier: free web services spin down after ~15 minutes idle and may take up to a minute to spin back up on the next request. Subsequent loads are fast once it’s awake.
+
+> Note: This app uses an in-memory SQLite database (session-based). Your data resets when the app restarts (e.g., Render free tier spin-down).
+
 
 
 ---
