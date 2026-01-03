@@ -1,21 +1,18 @@
-# tests/test_parser.py
-"""Parser + timestamp smoke tests."""
-
-from src.io.ibkr_flex_parser import IBKRFlexParser
+# tests/test_metrics_smoke.py
+from __future__ import annotations
 
 
-def test_parse_valid_xml(sample_xml):
-    executions = IBKRFlexParser.parse_xml(sample_xml)
-    assert len(executions) == 2
-    assert executions[0].symbol == "AAPL"
-    assert executions[0].side in ("BUY", "SELL")
+def compute_equity_curve_points(executions):
+    ordered = sorted(executions, key=lambda e: e.ts_utc)
+    points = []
+    cumulative = 0.0
+    for e in ordered:
+        signed_qty = e.quantity if e.side == "BUY" else -e.quantity
+        cumulative += (-signed_qty * e.price) + e.commission
+        points.append((e.ts_utc, cumulative))
+    return points
 
 
-def test_parse_timestamp():
-    ts_str = "2025-01-15 09:30:00"
-    dt_et, dt_utc = IBKRFlexParser.parse_timestamp(ts_str)
-
-    assert dt_et.year == 2025
-    assert dt_et.month == 1
-    assert dt_et.day == 15
-    assert dt_utc.tzname() == "UTC"
+def test_equity_curve_non_empty(parsed_executions):
+    curve = compute_equity_curve_points(parsed_executions)
+    assert len(curve) > 0

@@ -1,21 +1,29 @@
 # tests/test_parser.py
-"""Parser + timestamp smoke tests."""
+from __future__ import annotations
 
-from src.io.ibkr_flex_parser import IBKRFlexParser
-
-
-def test_parse_valid_xml(sample_xml):
-    executions = IBKRFlexParser.parse_xml(sample_xml)
-    assert len(executions) == 2
-    assert executions[0].symbol == "AAPL"
-    assert executions[0].side in ("BUY", "SELL")
+import pytz
 
 
-def test_parse_timestamp():
-    ts_str = "2025-01-15 09:30:00"
-    dt_et, dt_utc = IBKRFlexParser.parse_timestamp(ts_str)
+def test_parse_xml_smoke(parsed_executions):
+    assert len(parsed_executions) == 2
 
-    assert dt_et.year == 2025
-    assert dt_et.month == 1
-    assert dt_et.day == 15
-    assert dt_utc.tzname() == "UTC"
+    e0 = parsed_executions[0]
+    assert e0.account_id == "U1234567"
+    assert e0.ib_execution_id == "0000a1"
+    assert e0.symbol == "AAPL"
+    assert e0.conid == 265598
+    assert e0.ts_raw.startswith("2025-01-02;09:31:00")
+    assert e0.side == "BUY"
+    assert e0.quantity == 10.0
+    assert e0.price == 190.12
+    assert e0.commission == -1.0
+    assert e0.exchange == "NASDAQ"
+    assert e0.order_type == "LMT"
+    assert e0.order_time_utc is not None
+    assert e0.ts_utc.tzinfo is not None
+    assert e0.ts_utc.tzinfo == pytz.UTC
+
+    e1 = parsed_executions[1]
+    assert e1.ib_execution_id == "0000a2"
+    assert e1.side == "SELL"
+    assert e1.quantity == 5.0
