@@ -1,21 +1,25 @@
 # src/ui/pages/calendar_page.py
 """Calendar page - monthly P&L heatmap."""
 
+
 import calendar
 from datetime import date
+
 
 import pandas as pd
 import streamlit as st
 from sqlmodel import select
+
 
 from src.db.models import Trade, TradeDay
 from src.db.session import get_session
 from src.ui.helpers.current_context import require_account_id
 
 
+
 def render():
     st.subheader("📅 Calendar P&L")
-
+    
     account_id = require_account_id()
 
     use_gross = st.checkbox("Show Gross (vs Net)", value=False)
@@ -103,13 +107,15 @@ def render():
                 cols[i].write(str(day_num))
                 continue
 
-            color = "green" if pnl > 0 else "red" if pnl < 0 else "gray"
+            # Use rgba for transparency instead of opacity
+            bg_color = "rgba(0, 128, 0, 0.25)" if pnl > 0 else "rgba(255, 0, 0, 0.25)" if pnl < 0 else "rgba(128, 128, 128, 0.25)"
+            
             with cols[i]:
                 st.markdown(
                     f"""
-                    <div style="background-color: {color}; opacity: 0.25; padding: 10px; border-radius: 6px; text-align: center;">
-                      <b>{day_num}</b><br/>
-                      ${pnl:.2f}
+                    <div style="background-color: {bg_color}; padding: 10px; border-radius: 6px;">
+                      <div style="color: #262730; font-weight: 500; text-align: left;">{day_num}</div>
+                      <div style="color: #262730; font-weight: 700; font-size: 16px; text-align: center; margin-top: 4px;">${pnl:.2f}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
