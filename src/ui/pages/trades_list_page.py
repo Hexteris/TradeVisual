@@ -4,10 +4,13 @@
 import streamlit as st
 import pandas as pd
 from sqlmodel import select
+from zoneinfo import ZoneInfo
+from datetime import timezone as dt_timezone
 
 from src.db.models import Trade
 from src.db.session import get_session
 from src.ui.helpers.current_context import require_account_id
+
 
 
 def render():
@@ -63,14 +66,29 @@ def render():
     elif pnl_filter == "Losers":
         filtered_trades = [t for t in filtered_trades if t.net_pnl_total < 0]
 
+        # Get timezone from session
+    tz_name = st.session_state.get("report_timezone", "US/Eastern")
+    tz_obj = ZoneInfo(tz_name)
+    
     # Build table
     rows = []
     for trade in filtered_trades:
+        # Convert UTC to local timezone
+        opened_utc = trade.opened_at_utc.replace(tzinfo=dt_timezone.utc)
+        opened_local = opened_utc.astimezone(tz_obj)
+        
+        if trade.closed_at_utc:
+            closed_utc = trade.closed_at_utc.replace(tzinfo=dt_timezone.utc)
+            closed_local = closed_utc.astimezone(tz_obj)
+            closed_display = closed_local.strftime("%Y-%m-%d %H:%M")
+        else:
+            closed_display = "Open"
+        
         rows.append({
             "Symbol": trade.symbol,
             "Direction": trade.direction,
-            "Opened": trade.opened_at_utc.strftime("%Y-%m-%d %H:%M"),
-            "Closed": trade.closed_at_utc.strftime("%Y-%m-%d %H:%M") if trade.closed_at_utc else "Open",
+            "Opened": opened_local.strftime("%Y-%m-%d %H:%M"),
+            "Closed": closed_display,
             "Status": trade.status,
             "Qty": trade.quantity_opened,
             "Gross P&L": f"${trade.gross_pnl_total:.2f}",
