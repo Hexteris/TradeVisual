@@ -110,7 +110,15 @@ class TradeReconstructor:
             try:
                 exe_utc = exe.ts_utc.replace(tzinfo=timezone.utc)
                 exe_local = exe_utc.astimezone(tz)
-                day_key = exe_local.date()
+                raw_day = exe_local.date()
+                
+                # If execution is on weekend, roll back to Friday
+                if raw_day.weekday() == 5:  # Saturday
+                    day_key = date(raw_day.year, raw_day.month, raw_day.day - 1)
+                elif raw_day.weekday() == 6:  # Sunday
+                    day_key = date(raw_day.year, raw_day.month, raw_day.day - 2)
+                else:
+                    day_key = raw_day
             except Exception:
                 continue
             if day_key is None:
