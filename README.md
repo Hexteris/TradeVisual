@@ -1,93 +1,150 @@
-# TradeVisual - Trading Journal
+# TradeVisual — Trading Journal (Using IBKR Flex XML)
 
-Created for traders by traders. TradeVisual provides state-of-the-art visualization which integrates seamlessly with your IBKR trading data, creating a cohesive dashboard to measure metrics and improve decision-making.
+Created for traders by traders. TradeVisual provides state of the art visualisation which integrates seemlessly with your trading data, creating a cohesive dashboard for users to measure their metrics and improve decision making during trading sessions. TradeVisual is built with Streamlit and SQLModel that imports Interactive Brokers (IBKR) Flex Query XML, reconstructs trades via FIFO lot matching, and visualizes performance via a calendar, journal, and reports.
 
-A production-ready trading journal built with Streamlit and SQLModel, inspired by Tradervue.
+Live demo: https://tradevisual.onrender.com/
 
-### Link to Webpage
-https://tradevisual.onrender.com/
+> Note: This app uses an in-memory SQLite database (session-based). Your data resets when the app restarts (e.g., Render free tier spin-down).
+
+---
 
 ## Features
 
-### IBKR Integration
-- Parse IBKR Flex Query XML exports
-- Automatic trade reconstruction with FIFO lot matching
-- Multi-day position tracking
-- Realized P&L by day
+### IBKR integration
+- Import IBKR Flex Query **XML** (Trade Confirmation Flex Query).
+- Parse executions (fills) into a normalized execution model.
+- Automatic trade reconstruction using FIFO lot matching.
+- Multi-day position tracking and realized P&L by day.
+- Weekend handling: executions falling on Saturday/Sunday are rolled back to Friday for calendar grouping.
 
-### Dashboard & Reports
-- **Overview** - Win rate, profit factor, total P&L, avg win/loss
-- **Equity Curve** - Cumulative P&L with drawdown analysis
-- **Instrument Performance** - P&L breakdown by symbol
-- **Time of Day Analysis** - Entry time performance patterns
-- **Price Level Performance** - Success by stock price ranges
+### Dashboard & reports
+- Overview: win rate, profit factor, total P&L, avg win/loss.
+- Equity curve: cumulative P&L + drawdown + daily P&L.
+- Instrument performance: P&L by symbol.
+- Time-of-day analysis: entry-time performance patterns.
+- Price level performance: success by stock price ranges.
 
-### Trading Journal
-- **Calendar View** - Monthly P&L heatmap (green = profit, red = loss)
-- **Daily Journal** - Trade breakdown with local timezone display
-- **Trade List** - Advanced filtering by symbol, date, status, direction
-- **CSV Export** - Download filtered trades for analysis
+### Trading journal
+- Calendar view: monthly P&L heatmap.
+- Daily journal: per-day breakdown with local timezone display.
+- Trades list: filtering by symbol/date/status/direction.
+- CSV export: download filtered trades.
 
 ### Settings
-- Dynamic timezone switching (US/Eastern, Asia/Singapore, etc.)
-- Affects all timestamps and daily groupings
-- No re-import needed
+- Dynamic timezone switching (US/Eastern, Asia/Singapore, etc.).
+- Timezone impacts timestamps and daily groupings without re-import.
 
-## Quick Start
+---
+
+## Quick start
+
+### Prerequisites
+- Python 3.12+
 
 ### Installation
-
 ```bash
 git clone https://github.com/Hexteris/TradeVisual.git
 cd TradeVisual
+
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+# macOS/Linux:
+source venv/bin/activate
+# Windows (PowerShell):
+venv\Scripts\Activate.ps1
+
 pip install -r requirements.txt
 ```
 
-### Running Locally
-
+### Run locally
 ```bash
 streamlit run streamlit_app.py
 ```
 
-Open http://localhost:8501 in your browser.
+Open http://localhost:8501
 
-### Usage
+---
 
-1. Go to **Settings** and select your preferred timezone
-2. Navigate to **Import** page
-3. Upload your IBKR Flex Query XML file
-4. Explore your trades:
-   - **Calendar** - Monthly performance overview
-   - **Journal** - Daily trade details
-   - **Trade List** - Filter and export trades
-   - **Reports** - Comprehensive analytics
+## How to use
 
-## IBKR Flex Query Setup
+1. Open **Settings** and select your preferred timezone.
+2. Go to the **Import** page.
+3. Upload your IBKR Flex Query `.xml`.
+4. Explore:
+   - **Calendar** (monthly performance)
+   - **Journal** (daily breakdown)
+   - **Trade List** (filter + export)
+   - **Reports** (analytics)
 
-1. Log into IBKR Account Management
-2. Go to **Reports → Flex Queries → Create**
-3. Select **Trade Confirmation Flex Query**
-4. Add sections: Trades, Open Positions
-5. Include fields: Symbol, DateTime, Quantity, Price, Proceeds, Commission, IBOrderID
-6. Save and generate XML export
+---
 
-## Project Structure
+## Getting the IBKR `.xml` (Flex Query)
 
+TradeVisual expects an IBKR **Flex Query export** in **XML** format.
+
+### Create a Trade Confirmation Flex Query (template)
+1. Log in to the IBKR Client Portal.
+2. Go to **Performance & Reports → Flex Queries**.
+3. Create a new **Trade Confirmation Flex Query** template.
+4. Set output format to **XML**.
+
+### Include required fields
+When selecting fields for the Trades/Confirmations section, ensure your XML includes at least:
+- `accountId`
+- `ibExecID`
+- `symbol` (and optionally `conid`)
+- `dateTime`
+- `buySell`
+- `quantity`
+- `tradePrice`
+- `ibCommission`
+
+Optional (nice-to-have):
+- `exchange`
+- `orderType`
+- `orderTime`
+
+### Date/time formatting (must match parser)
+The parser accepts:
+- `YYYYMMDD;HHMMSS` (example: `20250102;093100`)
+- `YYYY-MM-DD;HH:MM:SS` (example: `2025-01-02;09:31:00`)
+- Either format may optionally include a trailing timezone name (example: `2025-01-02;09:31:00 US/Eastern`)
+
+### Run the query and download XML
+1. From the Flex Queries page, run the saved query.
+2. Download the generated report (IBKR may provide an XML file or a zipped download depending on settings).
+3. Upload the `.xml` file into TradeVisual on the **Import** page.
+
+---
+
+## Tests
+
+Run:
+```bash
+pytest -x -vv
 ```
+
+What’s covered:
+- Parser smoke test: XML → parsed executions > 0
+- Metrics smoke test: equity curve computation returns non-empty
+- FIFO correctness test: deterministic 3-fill scenario verifies FIFO realized gross/net P&L via the reconstructor and SQLModel
+
+---
+
+## Project structure
+
+```text
 TradeVisual/
 ├── src/
 │   ├── db/
-│   │   ├── models.py          # SQLModel definitions (Trade, TradeDay, Account)
-│   │   └── session.py         # SQLite in-memory database
+│   │   ├── models.py            # SQLModel definitions (Account, Execution, Trade, TradeDay)
+│   │   └── session.py           # Session-only SQLite (in-memory)
 │   ├── io/
-│   │   └── ibkr_flex_parser.py # XML parsing
+│   │   └── ibkr_flex_parser.py  # IBKR Flex XML parsing
 │   ├── domain/
-│   │   ├── reconstructor.py   # FIFO trade reconstruction engine
-│   │   └── metrics.py         # Analytics calculations
+│   │   ├── reconstructor.py     # FIFO trade reconstruction engine
+│   │   └── metrics.py           # Analytics calculations
 │   └── ui/
-│       ├── app.py             # Main Streamlit app
+│       ├── app.py               # Main Streamlit app
 │       ├── helpers/
 │       │   └── current_context.py
 │       └── pages/
@@ -96,111 +153,55 @@ TradeVisual/
 │           ├── journal_page.py
 │           ├── trades_list_page.py
 │           └── reports_page.py
-├── streamlit_app.py           # Entry point
+├── streamlit_app.py             # Streamlit entry point
 ├── requirements.txt
-├── render.yaml               # Render deployment config
+├── render.yaml                   # Render deployment config
 └── README.md
 ```
 
-## Key Features Explained
+---
 
-### Trade Reconstruction
-- **Executions** → Individual buy/sell orders from IBKR
-- **Trades** → Reconstructed positions using FIFO matching
-- **Trade Days** → Daily P&L breakdown (handles multi-day closes)
+## Deployment (Render)
 
-### FIFO Lot Matching
-- Open lots tracked chronologically
-- Closing executions matched to oldest lots first
-- Realized P&L computed per matched lot
-- Handles partial fills and position flips
+1. Push code to GitHub.
+2. Create a new Render **Web Service** and connect the repository.
+3. Ensure the start command runs Streamlit from the repo root:
+   ```bash
+   streamlit run streamlit_app.py
+   ```
+4. Deploy.
 
-### Weekend Trade Handling
-Weekend executions (after-hours, settlements) automatically roll back to Friday for accurate calendar display.
-
-### Timezone Intelligence
-All timestamps converted from UTC to your selected timezone for:
-- Daily trade grouping
-- Calendar date assignment
-- Journal and Trade List display
-
-## Deployment
-
-### Render.com (Recommended)
-
-1. Push code to GitHub
-2. Go to https://dashboard.render.com
-3. Click **New → Web Service**
-4. Connect your repository
-5. Render auto-detects `render.yaml` configuration
-6. Click **Create Web Service**
-7. App deploys in 3-5 minutes
-
-Your app will be live at: `https://your-app-name.onrender.com`
-
-**Note**: Free tier spins down after inactivity. Database is session-based (data clears on restart).
-
-## Tech Stack
-
-- **Frontend**: Streamlit 1.52+
-- **Backend**: Python 3.12
-- **Database**: SQLModel + SQLite (in-memory)
-- **Charts**: Plotly
-- **Data Processing**: Pandas
-- **XML Parsing**: lxml
-
-## Feature Comparison
-
-TradeVisual provides ~90% feature parity with Tradervue Silver tier ($30/month):
-
-| Feature | TradeVisual | Tradervue Free | Tradervue Silver |
-|---------|-------------|----------------|------------------|
-| Trade Limit | Unlimited | 30-100/month | Unlimited |
-| Calendar View | ✅ | ✅ | ✅ |
-| Daily Journal | ✅ | ✅ | ✅ |
-| Equity Curve | ✅ | ❌ | ✅ |
-| Advanced Reports | ✅ | ❌ | ✅ |
-| Filtering & Export | ✅ | ❌ | ✅ |
-| Time Analysis | ✅ | ❌ | ✅ |
-| Tags/Notes | ❌ | ❌ | ✅ |
-| Price Charts | ❌ | ❌ | ✅ |
-
-## Troubleshooting
-
-**App won't start locally:**
-- Check Python version: `python --version` (requires 3.12+)
-- Reinstall dependencies: `pip install -r requirements.txt`
-
-**XML import fails:**
-- Ensure file is valid IBKR Flex Query XML format
-- Check that all required fields are included in Flex Query
-- Verify file isn't corrupted
-
-**Timezone display issues:**
-- Change timezone in Settings page
-- Data updates instantly without re-import
-
-**Calendar shows weekend trades:**
-- This was fixed - weekend executions now roll back to Friday
-- If still occurring, please report issue
-
-## Future Enhancements
-
-- [ ] Tags system (categorize trades by strategy, setup, mistakes)
-- [ ] Trade notes with rich text editor
-- [ ] TradingView chart integration with entry/exit markers
-- [ ] Risk metrics (R-multiples, MFE/MAE)
-- [ ] Performance by day of week
-- [ ] Persistent database option
-
-## License
-
-MIT License
-
-## Contributing
-
-Issues and pull requests welcome! Please check existing issues before creating new ones.
+Free tier note: services can spin down after inactivity, and in-memory data will reset on restart.
 
 ---
 
-**Built with love for the trading community**
+## Troubleshooting
+
+### App won’t start locally
+- Verify Python: `python --version` (3.12+ recommended).
+- Reinstall deps: `pip install -r requirements.txt`.
+
+### XML import fails
+- Confirm the file is an IBKR Flex Query XML export (Trade Confirmation Flex Query).
+- Confirm the XML contains the required fields listed above.
+- Confirm `dateTime` matches one of the supported formats.
+
+### Timezone display issues
+- Change timezone in **Settings**.
+- Views update immediately; no re-import required.
+
+---
+
+## License
+MIT
+
+## Contributing
+Issues and pull requests are welcome.
+
+## Disclaimer
+TradeVisual is for educational/analysis purposes and is not financial advice.
+```
+
+What IBKR UI are you currently using to export the report: the **Client Portal** (web) or **Account Management / Reports** menus (older wording), and does IBKR give you a plain `.xml` or a `.zip` download most of the time?
+
+[1](https://www.ibkrguides.com/complianceportal/runaflexquery.htm)
