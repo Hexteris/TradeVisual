@@ -1,4 +1,4 @@
-# TradeVisual — Trading Journal (Using IBKR Flex XML)
+# TradeVisual - Trading Journal (Using IBKR Flex XML)
 
 Created for traders by traders. TradeVisual provides state of the art visualisation which integrates seemlessly with your trading data, creating a cohesive dashboard for users to measure their metrics and improve decision making during trading sessions. TradeVisual is built with Streamlit and SQLModel that imports Interactive Brokers (IBKR) Flex Query XML, reconstructs trades via FIFO lot matching, and visualizes performance via a calendar, journal, and reports.
 
