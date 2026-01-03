@@ -3,6 +3,8 @@
 
 import streamlit as st
 from sqlmodel import select
+from zoneinfo import ZoneInfo
+from datetime import timezone as dt_timezone
 
 from src.db.session import get_session
 from src.ui.helpers.current_context import require_account_id
@@ -66,7 +68,11 @@ def render():
         with st.expander(title):
             c1, c2, c3 = st.columns(3)
             c1.write(f"**Direction:** {trade.direction}")
-            c2.write(f"**Opened:** {trade.opened_at_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+            # Convert UTC to local timezone
+            tz_obj = ZoneInfo(tz)
+            opened_utc = trade.opened_at_utc.replace(tzinfo=dt_timezone.utc)
+            opened_local = opened_utc.astimezone(tz_obj)
+            c2.write(f"**Opened:** {opened_local.strftime('%Y-%m-%d %H:%M:%S %Z')}")
             c3.write(f"**Status:** {trade.status}")
 
             st.write(f"**Gross P&L:** ${trade_day.realized_gross:.2f}")
