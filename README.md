@@ -200,8 +200,3 @@ Issues and pull requests are welcome.
 
 ## Disclaimer
 TradeVisual is for educational/analysis purposes and is not financial advice.
-```
-
-What IBKR UI are you currently using to export the report: the **Client Portal** (web) or **Account Management / Reports** menus (older wording), and does IBKR give you a plain `.xml` or a `.zip` download most of the time?
-
-[1](https://www.ibkrguides.com/complianceportal/runaflexquery.htm)
