@@ -37,7 +37,7 @@ def _reset_flow():
 def render():
     _ensure_state()
 
-    st.subheader("📥 Import IBKR Flex Query")
+    st.subheader("Import IBKR Flex Query")
 
     uploaded_file = st.file_uploader(
         "Upload IBKR Flex Query XML",
