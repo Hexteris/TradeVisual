@@ -189,7 +189,10 @@ def render_price_levels(session, account_id: str):
         return
 
     df = df.copy()
-    df["bucket_label"] = df["price_bucket"].astype(str)
+    # Readable labels - e.g. $5-$10
+    df["bucket_label"] = df["price_bucket"].apply(
+        lambda x: f"${int(x.left)}-${int(x.right)}"
+    )
 
     fig_trades = px.bar(
         df,
@@ -211,8 +214,6 @@ def render_price_levels(session, account_id: str):
     )
     st.plotly_chart(fig_pnl, use_container_width=True)
 
-    st.dataframe(
-        df[["price_bucket", "trades", "pnl_sum", "pnl_avg"]],
-        use_container_width=True,
-        hide_index=True,
-    )
+    df_display = df[["bucket_label", "trades", "pnl_sum", "pnl_avg"]].copy()
+    df_display.columns = ["Price Range", "Trades", "Total P&L", "Avg P&L"]
+    st.dataframe(df_display, use_container_width=True, hide_index=True)
