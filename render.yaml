@@ -5,15 +5,12 @@ services:
   - type: web
     name: trading-journal
     runtime: python
-    pythonVersion: 3.9
+    pythonVersion: 3.12
     
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run src/ui/app.py
+    startCommand: streamlit run streamlit_app.py
     
     envVars:
-      - key: DATABASE_URL
-        scope: build,runtime
-        sync: false
       - key: STREAMLIT_SERVER_PORT
         value: 10000
       - key: STREAMLIT_SERVER_ADDRESS
@@ -26,4 +23,4 @@ services:
         value: false
     
     plan: free
-    healthCheckPath: /
+    healthCheckPath: /_stcore/health
