@@ -200,4 +200,4 @@ Issues and pull requests welcome! Please check existing issues before creating n
 
 ---
 
-**Built with ❤️ for the trading community**
+**Built with love for the trading community**
