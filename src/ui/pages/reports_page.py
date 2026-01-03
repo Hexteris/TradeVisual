@@ -12,7 +12,7 @@ from src.domain.metrics import MetricsCalculator
 
 def render():
     """Render reports page."""
-    st.subheader("Reports")
+    st.subheader("📄 Reports")
 
     account_id = require_account_id()
 
