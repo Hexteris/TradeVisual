@@ -3,19 +3,8 @@
 
 import streamlit as st
 
-from src.ui.pages import import_page, journal_page, calendar_page, trades_list_page, reports_page
-
-
-st.set_page_config(
-    page_title="Trading Journal",
-    page_icon="",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
 
 def init_session_state():
-    # Minimal session state for a stateless, per-upload app.
     if "account_id" not in st.session_state:
         st.session_state.account_id = None
     if "report_timezone" not in st.session_state:
@@ -23,6 +12,9 @@ def init_session_state():
 
 
 def main_app():
+    # Import pages lazily to avoid import-time side effects / circular imports
+    from src.ui.pages import import_page, journal_page, calendar_page, trades_list_page, reports_page
+
     st.title("Trading Journal")
 
     with st.sidebar:
@@ -44,7 +36,6 @@ def main_app():
         import_page.render()
         return
 
-    # All other pages require imported data (account_id present)
     if not st.session_state.account_id:
         st.warning("Import an XML first.")
         return
@@ -57,8 +48,3 @@ def main_app():
         calendar_page.render()
     elif page == "Journal":
         journal_page.render()
-
-
-if __name__ == "__main__":
-    init_session_state()
-    main_app()
